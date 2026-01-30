@@ -1,0 +1,136 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    
+permissions:
+  contents: write
+  packages: write
+
+env:
+  PYTHON_VERSION: "3.11"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ============================================
+  # Semantic Release & Versioning
+  # ============================================
+  release:
+    name: 📦 Release
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --dev
+        
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+
+  # ============================================
+  # Build & Push Docker Images
+  # ============================================
+  build-push:
+    name: 🐳 Build & Push
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.new_release == 'true'
+    strategy:
+      matrix:
+        service: [api, lab-mock, ml-worker]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.version }}
+            type=raw,value=latest
+            
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
+  # Deploy to Staging (Optional)
+  # ============================================
+  deploy-staging:
+    name: 🚀 Deploy Staging
+    runs-on: ubuntu-latest
+    needs: [release, build-push]
+    if: needs.release.outputs.new_release == 'true'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup GCP credentials
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Deploy to Cloud Run (example)
+        run: |
+          echo "Deploy version ${{ needs.release.outputs.version }} to staging"
+          # gcloud run deploy diagnoml-api \
+          #   --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:${{ needs.release.outputs.version }} \
+          #   --region europe-west1 \
+          #   --platform managed
+
+  # ============================================
+  # Notification
+  # ============================================
+  notify:
+    name: 📣 Notify
+    runs-on: ubuntu-latest
+    needs: [release, build-push]
+    if: always()
+    steps:
+      - name: Send notification
+        run: |
+          if [[ "${{ needs.release.outputs.new_release }}" == "true" ]]; then
+            echo "🎉 New release: v${{ needs.release.outputs.version }}"
+          else
+            echo "ℹ️ No new release"
+          fi
