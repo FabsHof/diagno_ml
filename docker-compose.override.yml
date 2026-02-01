@@ -1,0 +1,69 @@
+# =============================================================================
+# DiagnoML Docker Compose Override - Development
+# =============================================================================
+# This file is automatically loaded by docker-compose and contains
+# development-specific overrides for local development.
+#
+# Usage:
+#   docker compose up        # Uses both docker-compose.yml and this file
+#   docker compose -f docker-compose.yml up  # Production only (excludes overrides)
+
+services:
+  # ===========================================================================
+  # API Development Overrides
+  # ===========================================================================
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      - DEV_MODE=true
+      - LOG_LEVEL=DEBUG
+      - API_DEBUG=true
+    volumes:
+      # Mount source code for hot reloading (read-write for development)
+      - ./src:/app/src
+      - ./flows:/app/flows
+      - ./tests:/app/tests
+    command: ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # ===========================================================================
+  # Lab Mock Development Overrides
+  # ===========================================================================
+
+  lab-mock:
+    environment:
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./src:/app/src
+
+  # ===========================================================================
+  # MLflow Development Overrides
+  # ===========================================================================
+
+  mlflow:
+    environment:
+      - MLFLOW_TRACKING_INSECURE_TLS=true
+
+  # ===========================================================================
+  # Grafana Development Overrides
+  # ===========================================================================
+
+  grafana:
+    environment:
+      - GF_LOG_LEVEL=debug
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+
+  # ===========================================================================
+  # Prometheus Development Overrides
+  # ===========================================================================
+
+  prometheus:
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      - "--log.level=debug"

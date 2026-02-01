@@ -1,0 +1,36 @@
+# =============================================================================
+# DiagnoML Lab Mock Service Dockerfile
+# =============================================================================
+# Lightweight container for the lab mock service
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    fastapi==0.115.0 \
+    uvicorn[standard]==0.32.0 \
+    pydantic==2.9.2
+
+# Copy mock service code
+COPY src/mocks/ ./src/mocks/
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash appuser
+USER appuser
+
+# Expose port
+EXPOSE 8081
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# Run the service
+CMD ["python", "-m", "uvicorn", "src.mocks.lab_mock:app", "--host", "0.0.0.0", "--port", "8081"]

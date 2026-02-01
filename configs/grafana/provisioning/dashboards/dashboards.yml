@@ -1,0 +1,16 @@
+# Grafana Dashboard Provisioning
+# This file configures the dashboard provider
+
+apiVersion: 1
+
+providers:
+  - name: "DiagnoML Dashboards"
+    orgId: 1
+    folder: ""
+    folderUid: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

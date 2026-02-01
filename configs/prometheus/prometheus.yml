@@ -16,3 +16,13 @@ scrape_configs:
   - job_name: "mlflow"
     static_configs:
       - targets: ["mlflow:5000"]
+
+  - job_name: "lab-mock"
+    static_configs:
+      - targets: ["lab-mock:8081"]
+    metrics_path: /metrics
+
+  - job_name: "openclinica"
+    static_configs:
+      - targets: ["openclinica:8080"]
+    metrics_path: /metrics

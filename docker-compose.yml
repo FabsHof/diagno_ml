@@ -2,6 +2,15 @@
 # DiagnoML Docker Compose Configuration
 # =============================================================================
 # Development environment for the DiagnoML clinical diagnosis prediction PoC
+#
+# Service Ports:
+#   - API:            8000
+#   - OpenClinica:    8080
+#   - Lab Mock:       8081
+#   - MLflow:         5001
+#   - Prometheus:     9090
+#   - Grafana:        3000
+#   - PostgreSQL:     5432 (MLflow), 5433 (OpenClinica)
 
 services:
   # ===========================================================================
@@ -22,14 +31,16 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-mlflow}
       - POSTGRES_USER=${POSTGRES_USER:-mlflow}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mlflow}
+      - OC_BASE_URL=http://openclinica:8080/OpenClinica
+      - LAB_MOCK_URL=http://lab-mock:8081
     volumes:
-      - ./src:/app/src
-      - ./flows:/app/flows
+      - ./src:/app/src:ro
+      - ./flows:/app/flows:ro
     depends_on:
       postgres:
         condition: service_healthy
       mlflow:
-        condition: service_started
+        condition: service_healthy
     networks:
       - diagnoml-network
     healthcheck:
@@ -37,6 +48,78 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
+
+  # ===========================================================================
+  # EDC System (OpenClinica)
+  # ===========================================================================
+
+  openclinica:
+    image: openclinica/openclinica-ce:4.0
+    container_name: diagnoml-openclinica
+    ports:
+      - "${OC_PORT:-8080}:8080"
+    environment:
+      - DATABASE_HOST=openclinica-db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=${OC_DB_NAME:-openclinica}
+      - DATABASE_USER=${OC_DB_USER:-openclinica}
+      - DATABASE_PASSWORD=${OC_DB_PASSWORD:-openclinica}
+    volumes:
+      - openclinica-data:/usr/local/tomcat/openclinica.data
+      - ./configs/openclinica:/usr/local/tomcat/openclinica.config:ro
+    depends_on:
+      openclinica-db:
+        condition: service_healthy
+    networks:
+      - diagnoml-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/OpenClinica/pages/login/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  openclinica-db:
+    image: postgres:15-alpine
+    container_name: diagnoml-openclinica-db
+    ports:
+      - "${OC_DB_PORT:-5433}:5432"
+    environment:
+      - POSTGRES_DB=${OC_DB_NAME:-openclinica}
+      - POSTGRES_USER=${OC_DB_USER:-openclinica}
+      - POSTGRES_PASSWORD=${OC_DB_PASSWORD:-openclinica}
+    volumes:
+      - openclinica-db-data:/var/lib/postgresql/data
+    networks:
+      - diagnoml-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${OC_DB_USER:-openclinica} -d ${OC_DB_NAME:-openclinica}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # Mock Services
+  # ===========================================================================
+
+  lab-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.lab-mock
+    container_name: diagnoml-lab-mock
+    ports:
+      - "${LAB_MOCK_PORT:-8081}:8081"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - diagnoml-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
 
   # ===========================================================================
   # ML Infrastructure
@@ -46,7 +129,7 @@ services:
     image: ghcr.io/mlflow/mlflow:v2.17.0
     container_name: diagnoml-mlflow
     ports:
-      - "5000:5000"
+      - "${MLFLOW_PORT:-5001}:5000"
     environment:
       - MLFLOW_BACKEND_STORE_URI=postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD:-mlflow}@postgres:5432/${POSTGRES_DB:-mlflow}
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
@@ -63,6 +146,12 @@ services:
       --port 5000
       --backend-store-uri postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD:-mlflow}@postgres:5432/${POSTGRES_DB:-mlflow}
       --default-artifact-root /mlflow/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ===========================================================================
   # Databases
@@ -72,7 +161,7 @@ services:
     image: postgres:15-alpine
     container_name: diagnoml-postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-mlflow}
       - POSTGRES_USER=${POSTGRES_USER:-mlflow}
@@ -105,6 +194,12 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   grafana:
     image: grafana/grafana:10.2.0
@@ -112,6 +207,7 @@ services:
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
@@ -119,9 +215,16 @@ services:
       - ./configs/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     networks:
       - diagnoml-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 # =============================================================================
 # Networks
@@ -130,6 +233,7 @@ services:
 networks:
   diagnoml-network:
     driver: bridge
+    name: diagnoml-network
 
 # =============================================================================
 # Volumes
@@ -137,6 +241,14 @@ networks:
 
 volumes:
   postgres-data:
+    name: diagnoml-postgres-data
   mlflow-artifacts:
+    name: diagnoml-mlflow-artifacts
   prometheus-data:
+    name: diagnoml-prometheus-data
   grafana-data:
+    name: diagnoml-grafana-data
+  openclinica-data:
+    name: diagnoml-openclinica-data
+  openclinica-db-data:
+    name: diagnoml-openclinica-db-data
