@@ -1,0 +1,83 @@
+# CI test-unit job failing - tests/unit directory not found
+
+## Bug Description
+The CI pipeline unit test job is failing because the `tests/unit` directory does not exist in the repository.
+
+## Failing Job Details
+- **Job URL**: https://github.com/FabsHof/diagno_ml/actions/runs/21522209739/job/62016234323
+- **Commit**: a85e28fbd498c04096a61e074a2e3b95f00f4e14
+- **Job**: 🧪 Unit Tests
+- **Workflow**: CI Pipeline (`.github/workflows/ci.yml`)
+
+## Error Message
+```
+ERROR: file or directory not found: tests/unit
+
+collecting ... collected 0 items
+
+============================ no tests ran in 0.01s =============================
+##[error]Process completed with exit code 4.
+```
+
+## Root Cause
+The pytest command on line 100 of `.github/workflows/ci.yml` is trying to run:
+```bash
+uv run pytest tests/unit \
+  -v \
+  --cov=src \
+  --cov-report=xml \
+  --cov-report=term-missing \
+  -m "unit"
+```
+
+However, the `tests/unit` directory does not exist in the repository at the failing commit, causing pytest to exit with code 4.
+
+## Proposed Solutions
+
+### Option 1: Create the missing directory structure (Recommended)
+Create the `tests/unit` directory and add at least one test file:
+
+```bash
+mkdir -p tests/unit
+touch tests/unit/__init__.py
+```
+
+Then create a test file, e.g., `tests/unit/test_example.py`:
+
+```python
+import pytest
+
+@pytest.mark.unit
+def test_example():
+    """Example unit test."""
+    assert True
+```
+
+### Option 2: Update the workflow to handle missing directories
+Modify the workflow at line 98-105 to make the test step optional:
+
+```yaml
+- name: Run unit tests
+  run: |
+    if [ -d "tests/unit" ]; then
+      uv run pytest tests/unit \
+        -v \
+        --cov=src \
+        --cov-report=xml \
+        --cov-report=term-missing \
+        -m "unit"
+    else
+      echo "No unit tests directory found, skipping..."
+    fi
+```
+
+### Option 3: Change the pytest path
+If tests are located elsewhere, update line 100 to point to the correct directory (e.g., `tests/` instead of `tests/unit`).
+
+## Impact
+- Blocking CI pipeline
+- Dependent jobs (integration tests, docker-build, CI success check) are affected
+- May prevent merges if branch protection is enabled
+
+## Additional Context
+The workflow also references `tests/integration` for integration tests (line 148), so you'll likely need to create that directory structure as well.
