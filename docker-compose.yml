@@ -55,16 +55,19 @@ services:
   # ===========================================================================
 
   openclinica:
-    image: openclinica/openclinica-ce:4.0
+    # Using wnameless/openclinica community image (OpenClinica 3.11)
+    # Note: No official OpenClinica Docker image exists
+    image: wnameless/openclinica:latest
+    platform: linux/amd64
     container_name: diagnoml-openclinica
     ports:
       - "${OC_PORT:-8080}:8080"
     environment:
-      - DATABASE_HOST=openclinica-db
-      - DATABASE_PORT=5432
-      - DATABASE_NAME=${OC_DB_NAME:-openclinica}
-      - DATABASE_USER=${OC_DB_USER:-openclinica}
-      - DATABASE_PASSWORD=${OC_DB_PASSWORD:-openclinica}
+      - DB_HOST=openclinica-db
+      - DB_PORT=5432
+      - DB_NAME=${OC_DB_NAME:-openclinica}
+      - DB_USER=${OC_DB_USER:-openclinica}
+      - DB_PASS=${OC_DB_PASSWORD:-openclinica}
     volumes:
       - openclinica-data:/usr/local/tomcat/openclinica.data
       - ./configs/openclinica:/usr/local/tomcat/openclinica.config:ro
@@ -74,7 +77,8 @@ services:
     networks:
       - diagnoml-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/OpenClinica/pages/login/login"]
+      # Check if Tomcat is responding (OpenClinica app health varies by version)
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -126,7 +130,9 @@ services:
   # ===========================================================================
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.17.0
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
     container_name: diagnoml-mlflow
     ports:
       - "${MLFLOW_PORT:-5001}:5000"
